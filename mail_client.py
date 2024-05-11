@@ -1,390 +1,308 @@
 import socket
+import smtplib
+import sys
 
-# Parameters:
-# Address of the SMTP mailserver and POP3 server user of client wishes to connect to
-HOST = input('Enter the ip address for the SMTP and POP3 server: ')               # default 127.0.0.1
+# Accept server IP address as command-line argument
+server_ip = input('Server IP address: ')
+SMTP_port = input('SMTP_port: ')
+# Function to authenticate user with POP3 server
+def authenticate(username, password):
+    try:
+        pop3_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        pop3_socket.connect((server_ip, 110))  # Connect to POP3 server
+        response = pop3_socket.recv(1024).decode()  # Receive initial server response
+        print(response)
 
-# Port of SMTP mailserver user of client wishes to connect to
-SMTP_PORT = int(input('Enter an integer for the port of the SMTP server: '))      # default is 25
+        # Send USER command
+        pop3_socket.send(f'USER {username}\r\n'.encode())
+        response = pop3_socket.recv(1024).decode()
+        print(response)
 
-# Port of POP3 server user of client whishes to connect to
-POP3_PORT = int(input('Enter an integer for the port of the POP3 server: '))      # defaull is 110
+        # Send PASS command
+        pop3_socket.send(f'PASS {password}\r\n'.encode())
+        response = pop3_socket.recv(1024).decode()
+        print(response)
 
+        if response.startswith('+OK'):
+            print("Authentication successful")
+            return True
+        else:
+            print("Authentication failed")
+            return False
+    except Exception as e:
+        print("Error:", e)
+        return False
 
-def loop_mail_sending():
-    """
-    Function that handles mail sending option to an SMTP mail server with RFC821. Before communicating
-    with SMTP server a format check takes place, expected format is shown below.
-    Input: < From: name@domain
-             To: name1@domain1, ..., nameX@domainX
-             Subject: <body, max 150 characters or empty>
-             <mail body>
-             '.' >
-    Output: Mail sent confirmation, or failure with correct error code and detailed fault
-    """
-    # Receive and print the first welcome message from the SMTP server, to let user know connection was successful
-    data = client_socket.recv(1024).decode().strip()
-    print('Server:', data, '\nType your full message and end with ".", follow format shown in assignment:')
+# Function for sending mail
+def send_mail(connection):
+    data = connection.recv(1024).decode().strip()
+    print('Server:', data)
+    #print("Enter the mail to be sent in the following format:")
+    #print("From: <username>@<domain name>")
+    #print("To: <username>@<domain name>")
+    #print("Subject: <subject string, max 150 characters>")
+    #print("<Message body – one or more lines, terminated by a final line with only a full stop character>")
 
-    message_lines = []
+    # Get email details from user input
+    from_email = input("From: ")
+    to_email = input("To: ")
+    subject = input("Subject: ")
+
+    # Read message body until a line with only a full stop character
+    message_body = []
+    print("Enter message body (end with a line containing a single full stop character):")
     while True:
-        # Receive a line of the email message
         line = input()
         if line == '.':
-            # End of email message reached
+            break
+        message_body.append(line)
+
+    # Construct the email message
+    email_message = f"From: {from_email}\nTo: {to_email}\nSubject: {subject}\n"
+    email_message += "\n".join(message_body)
+    # Send email using SMTP
+    try:
+        initial_response = connection.recv(1024).decode().strip()
+        print(initial_response.decode())
+
+        # Send HELO command
+        connection.send(b'HELO\r\n')
+        helo_response = connection.recv(1024).decode().strip()
+        print(helo_response.decode())
+
+        # Send MAIL FROM command
+        connection.send(f'MAIL FROM:<{from_email}>\r\n'.encode())
+        mail_from_response = connection.recv(1024).decode().strip()
+        print(mail_from_response.decode())
+
+        # Send RCPT TO command
+        connection.send(f'RCPT TO:<{to_email}>\r\n'.encode())
+        rcpt_to_response = connection.recv(1024).decode().strip()
+        print(rcpt_to_response.decode())
+
+        # Send DATA command
+        connection.send(b'DATA\r\n')
+        data_response = connection.recv(1024).decode().strip()
+        print(data_response.decode())
+
+        # Send email message
+        connection.send(email_message.encode())
+        # End email message with a single full stop on a new line
+        connection.send(b'\r\n.\r\n')
+        data_end_response = connection.recv(1024).decode().strip()
+        print(data_end_response.decode())
+
+        # Close connection with QUIT command
+        connection.send(b'QUIT\r\n')
+        quit_response = connection.recv(1024).decode().strip()
+        print(quit_response.decode())
+
+        print("Mail sent successfully")
+        connection.quit()
+    except Exception as e:
+        print("Failed to send mail:", e)
+
+# Function to retrieve list of emails from POP3 server
+def retrieve_emails():
+    try:
+        pop3_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        pop3_socket.connect((server_ip, 110))  # Connect to POP3 server
+        response = pop3_socket.recv(1024).decode()  # Receive initial server response
+        print(response)
+
+        # Send LIST command
+        pop3_socket.send(b'LIST\r\n')
+        response = pop3_socket.recv(1024).decode()
+        print(response)
+
+        # Parse response to extract email list
+        email_list = response.split('\n')
+        for email_info in email_list[1:-2]:  # Skip first and last lines (response codes)
+            email_info = email_info.strip().split()
+            email_number = email_info[0]
+            email_size = email_info[1]
+            print(f"No. {email_number} Sender: {email_info[2]} Date: {email_info[3]} Subject: {email_info[4]}")
+    except Exception as e:
+        print("Error:", e)
+
+# Function to retrieve a specific email from the POP3 server
+def retrieve_specific_email(pop3_socket, email_number):
+    try:
+        # Send RETR command to retrieve specific email
+        pop3_socket.send(f'RETR {email_number}\r\n'.encode())
+        response = pop3_socket.recv(1024).decode()
+        print(response)
+
+        # Print email content
+        print("Email content:")
+        while True:
+            response = pop3_socket.recv(1024).decode()
+            if response == '.\r\n':
+                break
+            print(response.strip())
+    except Exception as e:
+        print("Error:", e)
+
+# Function to delete a specific email from the POP3 server
+def delete_specific_email(pop3_socket, email_number):
+    try:
+        # Send DELE command to delete specific email
+        pop3_socket.send(f'DELE {email_number}\r\n'.encode())
+        response = pop3_socket.recv(1024).decode()
+        print(response)
+    except Exception as e:
+        print("Error:", e)
+
+# Main function to handle mail management options
+def manage_mail(username, password):
+    pop3_socket = authenticate(username, password)
+    if pop3_socket is None:
+        return
+
+    print("Mail management options:")
+    print("1. Retrieve email list")
+    print("2. Retrieve specific email")
+    print("3. Delete specific email")
+    print("4. Quit")
+
+    while True:
+        option = input("Enter your choice: ")
+
+        if option == '1':
+            retrieve_emails(pop3_socket)
+        elif option == '2':
+            email_number = input("Enter the number of the email to retrieve: ")
+            retrieve_specific_email(pop3_socket, email_number)
+        elif option == '3':
+            email_number = input("Enter the number of the email to delete: ")
+            delete_specific_email(pop3_socket, email_number)
+        elif option == '4':
+            print("Quitting...")
+            pop3_socket.send(b'QUIT\r\n')  # Send QUIT command to POP3 server
+            response = pop3_socket.recv(1024).decode()
+            print(response)
+            pop3_socket.close()
             break
         else:
-            # Append the line to the message
-            line += "\r\n"
-            message_lines.append(line)
+            print("Invalid option. Please try again.")
 
-    #
-    # Here we single out the 'From:' line, into a list
-    from_line = [line for line in message_lines if line.startswith('From:')]
-
-    # Bad format, no 'From:' line found
-    if len(from_line) == 0:
-        print("ERROR: Bad formatting of message, there was no 'From:' line found. Returning to menu, connection closed")
-        return
-
-    # 'From:' email address, check if there is one:
+# Function to search emails containing specific words/sentences
+def search_by_words(pop3_socket, search_query):
     try:
-        from_address = [line.split(':')[1].strip() for line in message_lines if line.startswith('From:')][0]
-    except IndexError:
-        from_address = ''
+        # Send RETR command to retrieve each email
+        pop3_socket.send(b'LIST\r\n')
+        response = pop3_socket.recv(1024).decode()
+        email_list = response.split('\n')[1:-2]  # Exclude response codes
+        for email_info in email_list:
+            email_number = email_info.split()[0]
+            pop3_socket.send(f'RETR {email_number}\r\n'.encode())
+            email_content = pop3_socket.recv(1024).decode()
+            if search_query in email_content:
+                print(email_content)
+    except Exception as e:
+        print("Error:", e)
 
-    #
-    # Here we single out the 'To:' line, into a list
-    to_lines = [line for line in message_lines if line.startswith('To:')]
+# Function to search emails based on time
+def search_by_time(pop3_socket, search_time):
+    try:
+        # Send RETR command to retrieve each email
+        pop3_socket.send(b'LIST\r\n')
+        response = pop3_socket.recv(1024).decode()
+        email_list = response.split('\n')[1:-2]  # Exclude response codes
+        for email_info in email_list:
+            email_number = email_info.split()[0]
+            pop3_socket.send(f'RETR {email_number}\r\n'.encode())
+            email_content = pop3_socket.recv(1024).decode()
+            # Extract email received time and compare with search_time
+            # Assuming email received time is in a specific format within email content
+            if search_time in email_content:
+                print(email_content)
+    except Exception as e:
+        print("Error:", e)
 
-    # Bad format, no 'To:' line found
-    if len(to_lines) == 0:
-        print("ERROR: Bad formatting of message, there was no 'To:' line found. Returning to menu, connection closed")
+# Function to search emails based on address
+def search_by_address(pop3_socket, search_address):
+    try:
+        # Send RETR command to retrieve each email
+        pop3_socket.send(b'LIST\r\n')
+        response = pop3_socket.recv(1024).decode()
+        email_list = response.split('\n')[1:-2]  # Exclude response codes
+        for email_info in email_list:
+            email_number = email_info.split()[0]
+            pop3_socket.send(f'RETR {email_number}\r\n'.encode())
+            email_content = pop3_socket.recv(1024).decode()
+            # Extract email address and compare with search_address
+            # Assuming email address is in a specific format within email content
+            if search_address in email_content:
+                print(email_content)
+    except Exception as e:
+        print("Error:", e)
+
+# Function to handle mail searching options
+def search_mail(username, password):
+    pop3_socket = authenticate(username, password)
+    if pop3_socket is None:
         return
 
-    # 'To:' email address(es), check if there is(are) one(multiple):
-    to_addresses = [addr.strip() for line in to_lines for addr in line.split(':')[1].split(',')]
-    if len(to_addresses) == 0:
-        to_addresses = ['']
+    print("Mail searching options:")
+    print("1. Search by words/sentences")
+    print("2. Search by time")
+    print("3. Search by address")
+    print("4. Quit")
 
-    #
-    # Here we check 'Subject:' line
-    subject_line = [line for line in message_lines if line.startswith('Subject:')]
-    if len(subject_line) == 0:
-        print("ERROR: Bad formatting of message, there was no 'Subject:' line found. Returning to menu, connection closed")
-        return
-    if len(subject_line[0]) > 150:
-        print("ERROR: Bad formatting of message, the 'Subject' argument exceeded 150 characters. Returning to menu, connection closed")
-        return
-
-    #
-    # Start communication with SMTP server now:
-
-    # Effectuate 'HELO' command, the IP giving is the IP of client
-    var1 = client_socket.getpeername()[0]
-    client_socket.send('HELO {}\r\n'.format(var1).encode())
-    data = client_socket.recv(1024).decode().strip()
-    if not data.startswith('250'):
-        print(data)
-        return
-
-    # Effectuate 'MAIL FROM:' command
-    client_socket.send('MAIL FROM: {}\r\n'.format(from_address).encode())
-    data = client_socket.recv(1024).decode().strip()
-    if not data.startswith('250'):
-        print(data)
-        return
-
-    # Effectuate 'RCPT TO:' command(s)
-    for i in to_addresses:
-        client_socket.send('RCPT TO: {}\r\n'.format(i).encode())
-        data = client_socket.recv(1024).decode().strip()
-        if not data.startswith('250'):
-            print(data)
-            return
-
-    # Effectuate 'DATA' command
-    client_socket.send(b'DATA\r\n')
-    data = client_socket.recv(1024).decode().strip()
-    if not data.startswith('354'):
-        print(data)
-        return
-
-    message_lines.append(".\r\n")
-    for j in message_lines:
-        # Var 'j' already has a \r\n at the end
-        client_socket.send(j.encode())
-
-    data = client_socket.recv(1024).decode().strip()
-
-    if not data.startswith('250'):
-        print(data)
-        return
-
-    print('Mail sent successfully, returning to menu')
-    return
-
-
-def loop_mail_management():
-    """
-        Function that handles mail management option to a POP3 server with RFC1939. Before manually communicating
-        with POP3 server, this script executes STAT and LIST command to let user know the amount of mails with extra information,
-        this is shown in following format: <mail#> <sender of mail> <received at timestamp> <subject> .
-
-        Input: commands - STAT|LIST (arg*)|RETR (arg)|DELE (arg)|RSET|QUIT
-                          * means an optional argument
-        Output: Normal outputs you can expect from a POP3 server, following RFC1939
-        """
-    # Receive and print the first welcome message, to let user of client know connection with POP3 server is successful
-    data = client_socket.recv(1024).decode().strip()
-    print(data)
-
-    # Authentication of user using client, loop you can leave by inputting correct information or type 'EXIT' as username argument
     while True:
-        USER = input('Please enter username or "EXIT": ').strip()
-        PASS = input('Please enter password: ').strip()
+        option = input("Enter your choice: ")
 
-        # You can only leave this authentication loop by inputting correct userlogin and password OR typing 'QUIT' as username
-        if USER == 'EXIT':
-            return
-
-        # Communicate with POP3 server to authenticate userlogin
-        client_socket.send('USER {}\r\n'.format(USER).encode())
-        data = client_socket.recv(1024).decode().strip()
-
-        # POP3 server accepts username with '+OK' reply
-        if data.startswith('+OK'):
-
-            # Communicate with POP3 server to authenticate userpassword
-            client_socket.send('PASS {}\r\n'.format(PASS).encode())
-            data = client_socket.recv(1024).decode().strip()
-
-            # Password passed, and a lock was applied to mailbox
-            if data.startswith('+OK'):
-                print('Authentification and locking mailbox succesfull, {}'.format(data))
-
-                # You can only leave this authentication loop by inputting correct userlogin and password OR typing 'QUIT' as username
-                break
-
-            # Password or locking of mailbox failed, print statement explains what happened
-            else:
-                print('Authentication failed, {}. Try again or exit...'.format(data))
-
-        # Userlogin failed
+        if option == '1':
+            search_query = input("Enter words/sentences to search: ")
+            search_by_words(pop3_socket, search_query)
+        elif option == '2':
+            search_time = input("Enter time in MM/DD/YY format to search: ")
+            search_by_time(pop3_socket, search_time)
+        elif option == '3':
+            search_address = input("Enter address to search: ")
+            search_by_address(pop3_socket, search_address)
+        elif option == '4':
+            print("Quitting...")
+            pop3_socket.send(b'QUIT\r\n')  # Send QUIT command to POP3 server
+            response = pop3_socket.recv(1024).decode()
+            print(response)
+            pop3_socket.close()
+            break
         else:
-            print('Authentication failed, {}. Try again or exit...'.format(data))
+            print("Invalid option. Please try again.")
 
-    # Communications with server, followed by formatting mailbox information as requested in problem discription.
-    # Format of information: <mail#> <sender> <timestamp received> <subject>
-    client_socket.send(b'STAT\r\n')
-    data = client_socket.recv(1024).decode().strip()
+   # Main function to display menu and handle user options
+def main():
+    username = input("Enter your username: ")
+    password = input("Enter your password: ")
 
-    # second argument on index 1 is the amount of mails in the mailbox
-    temp = data.split()[1]
-    if int(temp) == 0:
-        print("Mailbox is empty.")
-
-    # Formatting of needed information like subject, timestamp, ... Use 'RETR' to gather this information from the POP3 server first
-    else:
-
-        # Loop over all the mails in the mailbox
-        for i in range(1, int(temp) + 1):
-
-            # Retrieve the body of the mail
-            client_socket.send('RETR {}\r\n'.format(i).encode())
-            data = client_socket.recv(1024).decode().strip()
-
-            # Prepare to receive mail body, transmission ending in '.\r\n'
-            if data.startswith('+OK'):
-                # Loop until the end of the mail message is reached: '\r\n'. Body will get stored in list "message_lines"
-                message_lines = []
-                terminate = False
-
-                while True and not terminate:
-                    # Receive a line of the mail message, strip any leading or trailing whitespaces
-                    line = client_socket.recv(1024).decode().strip()
-                    line_list = line.split('\r\n')
-
-                    # End of email message reached, loop gets terminated
-                    if line == '.\r\n' or line == '.' or line == '.\r' or line == '.\n':
-                        break
-                    for item in line_list:
-                        if item == '.\r\n' or item == '.' or item == '.\r' or item == '.\n':
-                            terminate = True
-                            break
-
-                        # Line appended to list "message_lines"
-                        else:
-                            message_lines.append(item)
-
-                # Gather needed information from received mail body
-                sender_line = [line.split(':')[1].strip() for line in message_lines if line.startswith('From:')][0]
-                timestamp_line = [line[len('Received at:'):].strip() for line in message_lines if line.startswith('Received at:')][0]
-                subject_line = [line[len('Subject:'):].strip() for line in message_lines if line.startswith('Subject:')][0]
-
-                # Print the required information
-                print('{}. {} {} {}'.format(i, sender_line, timestamp_line, subject_line))
-
-            # Something went wrong, more information in print statement
-            else:
-                print(data)
-
-    # Interactive part of code, where authenticated user has free choice what to do with their mailbox
     while True:
-        print('Available commands: STAT|LIST (arg*)|RETR (arg)|DELE (arg)|RSET|QUIT')
+        print("Choose an option:")
+        print("a) Mail Sending")
+        print("b) Mail Management")
+        print("c) Mail Searching")
+        print("d) Exit")
+        option = input("Enter your choice: ")
 
-        # Receive input command from user
-        command = input('>')
+        if option == 'a':
+            connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                # attempt to connect to the host
+                connection.connect((server_ip, SMTP_port))
+                send_mail(connection)
+            finally:
+                connection.close()
 
-        # Handle 'QUIT' command, return to main menu and save changes to mailbox
-        if command == 'QUIT':
-            client_socket.send((command + '\r\n').encode())
-            data = client_socket.recv(1024).decode().strip()
-            print(data)
-            print('Returning to main menu')
-            return
-
-        # Handle 'LIST' command, output from POP3 may be multi-line
-        elif command.startswith('LIST'):
-
-            # Single-line response from server
-            if command.split()[-1].strip() != 'LIST':
-                client_socket.send((command + '\r\n').encode())
-                data = client_socket.recv(1024).decode().strip()
-                print(data)
-
-            # Multi-line response from server
-            else:
-                client_socket.send((command + '\r\n').encode())
-                data = client_socket.recv(1024).decode().strip()
-
-                # Prepare for multi-line response from server, terminated by '.\r\n'
-                if data.startswith('+OK'):
-                    print(data)
-
-                    message_lines = []
-                    terminate = False
-                    while True and not terminate:
-                        # Receive a line of the mail message, strip any leading or trailing whitespaces
-                        line = client_socket.recv(1024).decode().strip()
-                        line_list = line.split('\r\n')
-
-                        # End of email message reached, loop gets terminated
-                        if line == '.\r\n' or line == '.' or line == '.\r' or line == '.\n':
-                            break
-                        for item in line_list:
-                            if item == '.\r\n' or item == '.' or item == '.\r' or item == '.\n':
-                                terminate = True
-                                break
-
-                            # Line appended to list "message_lines"
-                            else:
-                                message_lines.append(item)
-
-                    # Print information received from 'LIST' command
-                    for i in message_lines:
-                        print(i)
-
-        # Handle 'RETR' command, output from POP3 is multi-line
-        elif command.startswith('RETR'):
-            client_socket.send((command + '\r\n').encode())
-            data = client_socket.recv(1024).decode().strip()
-
-            # Prepare for multi-line response
-            if data.startswith('+OK'):
-                message_lines3 = []
-                terminate = False
-                while True and not terminate:
-                    # Receive a line of the mail message, strip any leading or trailing whitespaces
-                    line = client_socket.recv(1024).decode().strip()
-                    line_list = line.split('\r\n')
-
-                    # End of email message reached, loop gets terminated
-                    if line == '.\r\n' or line == '.' or line == '.\r' or line == '.\n':
-                        break
-                    for item in line_list:
-                        if item == '.\r\n' or item == '.' or item == '.\r' or item == '.\n':
-                            terminate = True
-                            break
-
-                        # Line appended to list "message_lines"
-                        else:
-                            message_lines3.append(item)
-
-                # Print response received from server
-                for item in message_lines3:
-                    print(item)
-
-            # Something went wrong, more information in print statement
-            else:
-                print(data)
-
-        # Handle other trivial command requiring no supporting code in client. If unknown command, POP3 will throw correct error which is printed for more information
+        elif option == 'b':
+            manage_mail(username, password)
+        elif option == 'c':
+            search_mail(username)
+        elif option == 'd':
+            print("Exiting...")
+            break
         else:
-            client_socket.send((command + '\r\n').encode())
-            data = client_socket.recv(1024).decode().strip()
-            print(data)
+            print("Invalid option. Please try again.")
 
-
-while True:
-    '''
-    Main code to be run on repeat while client operates, main screen of client contains 3 options to chose from using user input.
-    User input will redirect to functions "loop_mail_management" or "loop_mail_sending". "Exit" will
-    shut client down.
-    '''
-    # What option the user wants to do with client
-    option = input('Please choose an option between "Mail Sending"/"Mail Management"/"Exit":\n').strip()
-    option = option.lower()
-
-    # Option for mail sending
-    if option == 'mail sending':
-        # Create a socket, TCP connection
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            # set a timeout for the connect method
-            client_socket.settimeout(10)
-            # attempt to connect to the host
-            client_socket.connect((HOST, SMTP_PORT))
-            loop_mail_sending()
-        except socket.timeout:
-            # handle the timeout exception here
-            print("Connection timed out, returning to main menu.")
-        except ConnectionRefusedError:
-            # handle the connection refused exception here
-            print("Connection refused, returning to main menu.")
-        except Exception as e:
-            # handle any other exceptions here
-            print(f"Unknown error: {e}, returning to main menu.")
-        finally:
-            client_socket.close()
-
-    # Option for mail management
-    elif option == 'mail management':
-        # Create a socket, TCP connection
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            # set a timeout for the connect method
-            client_socket.settimeout(5)
-            # attempt to connect to the host
-            client_socket.connect((HOST, POP3_PORT))
-            loop_mail_management()
-        except socket.timeout:
-            # handle the timeout exception here
-            print("Connection timed out, returning to main menu.")
-        except ConnectionRefusedError:
-            # handle the connection refused exception here
-            print("Connection refused, returning to main menu.")
-        except Exception as e:
-            # handle any other exceptions here
-            print(f"Unknown error: {e}, returning to main menu.")
-        finally:
-            client_socket.close()
-
-    # Option for exiting mail client program
-    elif option == 'exit':
-        print('Now leaving mail client program, all connections were terminated.\nHave a nice day!\n')
-        break
-
-    # Option for unknown user input
-    else:
-        print('Please make sure to input a valid string, with 1 space between words. (Not case sensitive)\nOr enter "Exit" to leave')
+if __name__ == "__main__":
+    main()
